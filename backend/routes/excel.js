@@ -1,4 +1,5 @@
 const express = require('express');
+const XLSX    = require('xlsx');
 const multer = require('multer');
 const ExcelJS = require('exceljs');
 const path = require('path');
@@ -32,62 +33,63 @@ router.post('/import/:courseId', authenticate, requireRole('teacher'), upload.si
     );
     if (!courseRes.rows.length) return res.status(403).json({ error: 'Not your course' });
 
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(req.file.buffer);
+    // ── Use 'xlsx' library to read (ExcelJS fails on some .xlsx formats) ─────
+    const xlsxWb   = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const sheetName = xlsxWb.SheetNames[0];
+    if (!sheetName) return res.status(400).json({ error: 'Could not find any sheet in the uploaded file.' });
 
-    // Use getWorksheet(1) — worksheets[0] can be undefined for some .xlsx files
-    const ws = wb.getWorksheet(1) || wb.worksheets[0];
-    if (!ws) return res.status(400).json({ error: 'Could not read the Excel sheet. Make sure it is a valid .xlsx file.' });
+    // Convert to array-of-arrays (header:1 means row 0 = first row)
+    const rawRows = XLSX.utils.sheet_to_json(xlsxWb.Sheets[sheetName], { header: 1, defval: null });
+    if (!rawRows.length) return res.status(400).json({ error: 'The sheet appears to be empty.' });
 
-    // Scan first 3 rows to find header row with Roll No. and Student Name
-    let headerRow = 1;
-    let rollCol   = null;
-    let nameCol   = null;
+    // Find header row (look in first 3 rows for Roll No. and Student Name)
+    let headerRowIdx = -1;
+    let rollCol = -1;
+    let nameCol = -1;
 
-    for (let r = 1; r <= 3; r++) {
-      const row = ws.getRow(r);
-      row.eachCell((cell, colNum) => {
-        const val = String(cell.value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (val.includes('rollno'))                                  rollCol = colNum;
-        if (val.includes('studentname') || val === 'name')           nameCol = colNum;
+    for (let r = 0; r < Math.min(3, rawRows.length); r++) {
+      const row = rawRows[r];
+      row.forEach((cell, ci) => {
+        const val = String(cell || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (val.includes('rollno'))                         rollCol = ci;
+        if (val.includes('studentname') || val === 'name') nameCol = ci;
       });
-      if (rollCol && nameCol) { headerRow = r; break; }
+      if (rollCol !== -1 && nameCol !== -1) { headerRowIdx = r; break; }
     }
 
-    if (!rollCol || !nameCol) {
+    if (rollCol === -1 || nameCol === -1) {
       return res.status(400).json({
-        error: 'Could not find "Roll No." and "Student Name" columns. Make sure row 1 has these exact headers.'
+        error: 'Could not find "Roll No." and "Student Name" columns. Check that row 1 has these exact headers.'
       });
     }
 
-    // Parse student rows — skip header and any footer/page rows
+    // Parse student rows
     const students = [];
-    ws.eachRow((row, rowNum) => {
-      if (rowNum <= headerRow) return;
+    for (let r = headerRowIdx + 1; r < rawRows.length; r++) {
+      const row     = rawRows[r];
+      const rawRoll = row[rollCol];
+      const rawName = row[nameCol];
 
-      const rawRoll = row.getCell(rollCol).value;
-      const rawName = row.getCell(nameCol).value;
+      if (rawRoll === null || rawRoll === undefined) continue;
+      if (rawName === null || rawName === undefined) continue;
 
-      // Skip empty rows
-      if (rawRoll === null || rawRoll === undefined) return;
-      if (rawName === null || rawName === undefined) return;
+      // Skip date objects (footer rows like "Page -1 of 1")
+      if (rawRoll instanceof Date) continue;
 
       const rollNo = String(rawRoll).trim();
       const name   = String(rawName).trim();
 
-      // Skip footer rows: date objects, "Page X of Y", very short strings
-      if (rawRoll instanceof Date) return;
-      if (rollNo.toLowerCase().includes('page')) return;
-      if (name.toLowerCase().includes('page'))  return;
-      if (rollNo.length < 3) return;
-      // Skip rows where roll number doesn't look like a roll number (e.g. pure numbers like "1","2")
-      if (/^\d{1,2}$/.test(rollNo)) return;
+      if (!rollNo || !name) continue;
+      if (rollNo.toLowerCase().includes('page')) continue;
+      if (name.toLowerCase().includes('page'))   continue;
+      if (rollNo.length < 4) continue;           // real roll numbers are at least 4 chars
+      if (/^\d{1,2}$/.test(rollNo)) continue;  // skip plain S# numbers
 
       students.push({ roll_no: rollNo, name });
-    });
+    }
 
     if (!students.length) {
-      return res.status(400).json({ error: 'No student rows found in the sheet.' });
+      return res.status(400).json({ error: 'No valid student rows found. Check the file format.' });
     }
 
     // Upsert students and enroll them

@@ -19,6 +19,7 @@ const upload = multer({
 });
 
 // ── POST /api/excel/import/:courseId ─────────────────────────────────────────
+// Teacher uploads Excel sheet; students are added/synced
 router.post('/import/:courseId', authenticate, requireRole('teacher'), upload.single('sheet'), async (req, res) => {
   const { courseId } = req.params;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -33,52 +34,55 @@ router.post('/import/:courseId', authenticate, requireRole('teacher'), upload.si
 
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(req.file.buffer);
-    
-    // SAFETY CHECK: Fixes "Cannot read properties of undefined (reading 'getRow')"
-    if (!wb.worksheets || wb.worksheets.length === 0) {
-      return res.status(400).json({ error: 'The uploaded Excel file contains no readable worksheets.' });
-    }
-    
-    const ws = wb.worksheets[0];
 
-    // Detect header row — look for "Roll No" or "Student Name" in first 3 rows
+    // Use getWorksheet(1) — worksheets[0] can be undefined for some .xlsx files
+    const ws = wb.getWorksheet(1) || wb.worksheets[0];
+    if (!ws) return res.status(400).json({ error: 'Could not read the Excel sheet. Make sure it is a valid .xlsx file.' });
+
+    // Scan first 3 rows to find header row with Roll No. and Student Name
     let headerRow = 1;
-    let rollCol = null, nameCol = null;
+    let rollCol   = null;
+    let nameCol   = null;
 
     for (let r = 1; r <= 3; r++) {
       const row = ws.getRow(r);
-      if (!row) continue; // Skip if row doesn't exist
-
       row.eachCell((cell, colNum) => {
         const val = String(cell.value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (val.includes('rollno')) rollCol = colNum;
-        if (val.includes('studentname') || val.includes('name')) nameCol = colNum;
-        if (rollCol && nameCol) headerRow = r;
+        if (val.includes('rollno'))                                  rollCol = colNum;
+        if (val.includes('studentname') || val === 'name')           nameCol = colNum;
       });
-      if (rollCol && nameCol) break;
+      if (rollCol && nameCol) { headerRow = r; break; }
     }
 
     if (!rollCol || !nameCol) {
-      return res.status(400).json({ error: 'Could not find "Roll No." and "Student Name" columns. Please ensure they are in the first 3 rows.' });
+      return res.status(400).json({
+        error: 'Could not find "Roll No." and "Student Name" columns. Make sure row 1 has these exact headers.'
+      });
     }
 
-    // Parse student rows
+    // Parse student rows — skip header and any footer/page rows
     const students = [];
     ws.eachRow((row, rowNum) => {
       if (rowNum <= headerRow) return;
-      
-      const rollVal = row.getCell(rollCol).value;
-      const nameVal = row.getCell(nameCol).value;
-      
-      if (!rollVal || !nameVal) return;
-      
-      const rollNo = String(rollVal).trim();
-      const name = String(nameVal).trim();
-      
-      // Skip footer/utility rows
-      if (rollNo.toLowerCase().includes('page') || name.toLowerCase().includes('page')) return;
+
+      const rawRoll = row.getCell(rollCol).value;
+      const rawName = row.getCell(nameCol).value;
+
+      // Skip empty rows
+      if (rawRoll === null || rawRoll === undefined) return;
+      if (rawName === null || rawName === undefined) return;
+
+      const rollNo = String(rawRoll).trim();
+      const name   = String(rawName).trim();
+
+      // Skip footer rows: date objects, "Page X of Y", very short strings
+      if (rawRoll instanceof Date) return;
+      if (rollNo.toLowerCase().includes('page')) return;
+      if (name.toLowerCase().includes('page'))  return;
       if (rollNo.length < 3) return;
-      
+      // Skip rows where roll number doesn't look like a roll number (e.g. pure numbers like "1","2")
+      if (/^\d{1,2}$/.test(rollNo)) return;
+
       students.push({ roll_no: rollNo, name });
     });
 
@@ -86,18 +90,20 @@ router.post('/import/:courseId', authenticate, requireRole('teacher'), upload.si
       return res.status(400).json({ error: 'No student rows found in the sheet.' });
     }
 
-    // Upsert and Enroll
+    // Upsert students and enroll them
     let added = 0, existing = 0;
     for (const s of students) {
+      // Upsert user
       const upsert = await pool.query(
         `INSERT INTO users (name, roll_no, password_hash, role)
          VALUES ($1, $2, $3, 'student')
          ON CONFLICT (roll_no) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
-        [s.name, s.roll_no, s.roll_no]
+        [s.name, s.roll_no, s.roll_no] // password = roll_no (not used, roll_no is the "key")
       );
       const userId = upsert.rows[0].id;
 
+      // Enroll
       const enroll = await pool.query(
         `INSERT INTO enrollments (student_id, course_id) VALUES ($1, $2)
          ON CONFLICT DO NOTHING`,
@@ -115,6 +121,9 @@ router.post('/import/:courseId', authenticate, requireRole('teacher'), upload.si
 });
 
 // ── GET /api/excel/export/:courseId ─────────────────────────────────────────
+// Downloads attendance sheet in EXACT instructor format:
+// S# | Roll No. | Student Name | DD/MM/YYYY | DD/MM/YYYY | ...
+// Each date column = one session; P = Present, A = Absent
 router.get('/export/:courseId', authenticate, requireRole('teacher'), async (req, res) => {
   const { courseId } = req.params;
 
@@ -128,6 +137,7 @@ router.get('/export/:courseId', authenticate, requireRole('teacher'), async (req
     if (!courseRes.rows.length) return res.status(404).json({ error: 'Course not found' });
     const course = courseRes.rows[0];
 
+    // All sessions sorted by date
     const sessionsRes = await pool.query(
       `SELECT id, date, started_at FROM sessions
        WHERE course_id = $1 ORDER BY date ASC, started_at ASC`,
@@ -135,6 +145,7 @@ router.get('/export/:courseId', authenticate, requireRole('teacher'), async (req
     );
     const sessions = sessionsRes.rows;
 
+    // All students enrolled, sorted by roll_no
     const studentsRes = await pool.query(
       `SELECT u.id, u.roll_no, u.name FROM users u
        JOIN enrollments e ON e.student_id = u.id
@@ -144,6 +155,7 @@ router.get('/export/:courseId', authenticate, requireRole('teacher'), async (req
     );
     const students = studentsRes.rows;
 
+    // All attendance records
     const attRes = await pool.query(
       `SELECT a.student_id, a.session_id, a.status FROM attendance a
        JOIN sessions s ON s.id = a.session_id WHERE s.course_id = $1`,
@@ -152,83 +164,123 @@ router.get('/export/:courseId', authenticate, requireRole('teacher'), async (req
     const attMap = {};
     attRes.rows.forEach(r => { attMap[`${r.session_id}_${r.student_id}`] = r.status; });
 
+    // ── Build workbook ────────────────────────────────────────────────────────
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Attendance');
 
-    // Styles Configuration
+    // Styles
     const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
     const dateFill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1D4ED8' } };
     const presentFill= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
     const absentFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
     const altFill    = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
     const whiteFill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
-    const border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+    const thin = { style: 'thin', color: { argb: 'FFE2E8F0' } };
+    const border = { top: thin, left: thin, bottom: thin, right: thin };
+    const headerFont = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    const bodyFont   = { name: 'Arial', size: 10 };
 
-    // Set Column Widths
+    // Column setup: S# | Roll No. | Student Name | [date cols...]
     ws.getColumn(1).width = 5;
-    ws.getColumn(2).width = 15;
-    ws.getColumn(3).width = 30;
-    for (let i = 4; i <= 3 + sessions.length; i++) ws.getColumn(i).width = 12;
+    ws.getColumn(2).width = 14;
+    ws.getColumn(3).width = 28;
+    for (let i = 4; i <= 3 + sessions.length; i++) ws.getColumn(i).width = 13;
 
-    // Row 1: Title
-    ws.mergeCells(1, 1, 1, Math.max(3 + sessions.length, 4));
+    // ── Row 1: Course title ───────────────────────────────────────────────────
+    const titleCols = 3 + sessions.length;
+    ws.mergeCells(1, 1, 1, Math.max(titleCols, 4));
     const titleCell = ws.getCell('A1');
-    titleCell.value = `FLEX Attendance — ${course.name} (${course.code})`;
-    titleCell.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+    titleCell.value = `FAST NU — ${course.name} (${course.code}) — Attendance Sheet`;
+    titleCell.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
     titleCell.fill = headerFill;
-    titleCell.alignment = { horizontal: 'center' };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(1).height = 24;
 
-    // Row 2: Headers
+    // ── Row 2: Column headers (S# | Roll No. | Student Name | dates...) ──────
     const headers = ['S#', 'Roll No.', 'Student Name'];
     sessions.forEach(s => {
       const d = new Date(s.date);
-      headers.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`);
+      // DD/MM/YYYY format as required by instructor
+      const day   = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year  = d.getFullYear();
+      headers.push(`${day}/${month}/${year}`);
     });
 
     headers.forEach((h, i) => {
       const cell = ws.getCell(2, i + 1);
       cell.value = h;
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.font = headerFont;
       cell.fill = i >= 3 ? dateFill : headerFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
       cell.border = border;
-      cell.alignment = { horizontal: 'center' };
     });
+    ws.getRow(2).height = 22;
 
-    // Data rows
+    // ── Data rows ─────────────────────────────────────────────────────────────
     students.forEach((student, si) => {
       const rowNum = si + 3;
       const rowFill = si % 2 === 0 ? whiteFill : altFill;
 
-      // Basic Info
-      const cells = [si + 1, student.roll_no, student.name];
-      cells.forEach((val, i) => {
-        const cell = ws.getCell(rowNum, i + 1);
-        cell.value = val;
-        cell.fill = rowFill;
-        cell.border = border;
-      });
+      // S#
+      const snCell = ws.getCell(rowNum, 1);
+      snCell.value = si + 1;
+      snCell.font = bodyFont;
+      snCell.fill = rowFill;
+      snCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      snCell.border = border;
 
-      // Attendance Status
-      sessions.forEach((session, sessionIdx) => {
+      // Roll No.
+      const rollCell = ws.getCell(rowNum, 2);
+      rollCell.value = student.roll_no;
+      rollCell.font = bodyFont;
+      rollCell.fill = rowFill;
+      rollCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      rollCell.border = border;
+
+      // Student Name
+      const nameCell = ws.getCell(rowNum, 3);
+      nameCell.value = student.name;
+      nameCell.font = bodyFont;
+      nameCell.fill = rowFill;
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      nameCell.border = border;
+
+      // Attendance per session
+      sessions.forEach((session, si2) => {
         const status = attMap[`${session.id}_${student.id}`];
-        const cell = ws.getCell(rowNum, sessionIdx + 4);
-        cell.border = border;
-        
+        const cell = ws.getCell(rowNum, si2 + 4);
         if (status === 'present') {
           cell.value = 'P';
           cell.fill = presentFill;
-        } else {
+          cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF16A34A' } };
+        } else if (status === 'absent') {
           cell.value = 'A';
           cell.fill = absentFill;
+          cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFDC2626' } };
+        } else {
+          cell.value = '';
+          cell.fill = rowFill;
+          cell.font = bodyFont;
         }
-        cell.alignment = { horizontal: 'center' };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = border;
       });
+
+      ws.getRow(rowNum).height = 16;
     });
 
-    const filename = `Attendance_${course.code}.xlsx`;
+    // ── Footer ────────────────────────────────────────────────────────────────
+    const footerRow = students.length + 3;
+    ws.mergeCells(footerRow, 1, footerRow, Math.max(titleCols, 4));
+    const footer = ws.getCell(footerRow, 1);
+    footer.value = `Generated by FLEX Attendance System · ${new Date().toLocaleDateString('en-PK')} · P = Present, A = Absent`;
+    footer.font = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+    footer.alignment = { horizontal: 'center' };
+
+    const filename = `Attendance_${course.code}_${new Date().toISOString().split('T')[0]}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
     await wb.xlsx.write(res);
     res.end();
 
@@ -239,6 +291,7 @@ router.get('/export/:courseId', authenticate, requireRole('teacher'), async (req
 });
 
 // ── GET /api/excel/preview/:courseId ─────────────────────────────────────────
+// Returns JSON of attendance grid for the editable table in the UI
 router.get('/preview/:courseId', authenticate, requireRole('teacher'), async (req, res) => {
   const { courseId } = req.params;
   try {
@@ -271,6 +324,7 @@ router.get('/preview/:courseId', authenticate, requireRole('teacher'), async (re
 });
 
 // ── PATCH /api/excel/attendance ───────────────────────────────────────────────
+// Teacher edits a cell in the preview table
 router.patch('/attendance', authenticate, requireRole('teacher'), async (req, res) => {
   const { session_id, student_id, status } = req.body;
   if (!['present', 'absent'].includes(status))

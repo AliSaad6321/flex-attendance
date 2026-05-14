@@ -18,12 +18,12 @@
       </div>
       <div class="toggle-cards">
         <div class="role-card" id="btn-teacher-mode">
-          <div class="role-icon">🎓</div>
+          <div class="role-icon"></div>
           <div class="role-label">Teacher</div>
           <div class="role-desc">Start session, manage attendance</div>
         </div>
         <div class="role-card" id="btn-student-mode">
-          <div class="role-icon">📱</div>
+          <div class="role-icon"></div>
           <div class="role-label">Student</div>
           <div class="role-desc">Mark your attendance</div>
         </div>
@@ -62,7 +62,7 @@
         </div>
 
         <label class="upload-label" for="excel-upload">
-          📂 Upload Attendance Sheet (Excel)
+          Upload Attendance Sheet (Excel)
           <span id="upload-filename">No file chosen</span>
         </label>
         <input type="file" id="excel-upload" accept=".xlsx,.xls" style="display:none">
@@ -161,13 +161,13 @@
         </div>
 
         <div class="tabs">
-          <button class="tab active" data-tab="qr">📸 Scan QR</button>
-          <button class="tab" data-tab="code">🔢 Enter Code</button>
+          <button class="tab active" data-tab="qr"> Scan QR</button>
+          <button class="tab" data-tab="code"> Enter Code</button>
         </div>
 
         <div id="tab-qr" class="tab-content active">
           <p class="hint">Enter your roll number, then scan the QR code shown on the projector.</p>
-          <input type="text" id="student-roll-qr" placeholder="Roll Number (e.g. K22-1234)" class="input-field">
+          <input type="text" id="student-roll-qr" placeholder="Roll Number (e.g. 2L2-1234)" class="input-field">
 
           <div id="qr-scanner-wrap">
             <video id="qr-video" autoplay playsinline></video>

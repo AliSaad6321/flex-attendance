@@ -1,243 +1,117 @@
-# FLEX Attendance System v3
-**No-login QR Attendance · Excel Import/Export · One-Device-Per-Session Anti-Proxy**
+# FLEX Attendance v4 - Deploy Guide
+
+## What's new in v4
+- **No login at all** — toggle between Teacher/Student on the home screen
+- **No permanent DB** — DB is cleared when session ends / sheet is exported. Students exist only for the duration of a session
+- **Upload-to-Export flow** — Teacher uploads Excel → students mark attendance → teacher exports updated Excel → DB clears automatically
+- **Previous attendance preserved** — if the uploaded sheet already has date columns (P/A data), those columns carry through to the exported sheet unchanged
+- **Dynamic 6-digit manual code** — shown below the QR. Separate refresh interval controllable by teacher (5–60s)
+- **QR interval slider** — teacher sets QR refresh rate (5–60s) when starting session
+- **Teacher enters course name** when starting — no pre-registration needed
+- **One device per session** — device fingerprint prevents one phone from marking two students
+- **Student enters roll number** before scanning — validated against uploaded sheet
 
 ---
 
-## What's New in v3
+## Step 1: Neon Database
 
-| Feature | Detail |
-|---------|--------|
-| **No login required** | Toggle button: Teacher mode (password) or Student mode (roll number only) |
-| **Excel import** | Upload instructor's sheet — students enrolled automatically |
-| **Excel export** | Downloads in exact instructor format: S# \| Roll No. \| Student Name \| DD/MM/YYYY columns |
-| **Editable records** | Teacher can view and click-edit any P/A cell across all sessions |
-| **Adjustable QR interval** | Slider 5s–60s, changeable live during session |
-| **One device per session** | Browser fingerprint blocks same device marking two students |
-| **IP logging** | Every scan logs the student's IP address |
+1. Go to https://neon.tech → create free account → New Project
+2. Open **SQL Editor**
+3. Paste the contents of `backend/db/schema.sql` → click **Run**
+4. Copy your **Connection String** (looks like `postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require`)
 
 ---
 
-## How It Works
+## Step 2: GitHub
 
-```
-Teacher opens app → clicks Teacher → enters password → sees dashboard
-Teacher imports Excel sheet of students → clicks course → sets QR interval → starts session
-QR appears → teacher projects on screen
-Students open app on phone → click Student → enter roll number → tap course → scan QR
-Teacher sees live roster update → can toggle any student manually → exports Excel when done
-```
-
----
-
-## STEP-BY-STEP DEPLOYMENT ON RENDER
-
----
-
-### STEP 1 — Neon Database (5 min)
-
-1. Go to **https://neon.tech** → create free account
-2. New Project → name it `flex-v3`
-3. Left sidebar → **SQL Editor**
-4. Open `backend/db/schema.sql` from this zip → copy ALL contents → paste → **Run**
-5. You should see success messages for CREATE TABLE and INSERT
-6. Left sidebar → **Connection Details** → copy the **Connection string**
-   - Format: `postgresql://user:pass@ep-xxxx.us-east-2.aws.neon.tech/neondb?sslmode=require`
-
----
-
-### STEP 2 — Push to GitHub (3 min)
-
-1. Create a new repo at **https://github.com** (name: `flex-v3`, set Private)
-2. Open terminal in the extracted `flex-v3` folder:
-
+1. Create a new repository on GitHub (can be private)
+2. Push this folder:
 ```bash
+cd flex-v4
 git init
 git add .
-git commit -m "FLEX v3 initial"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/flex-v3.git
+git commit -m "FLEX Attendance v4"
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 git push -u origin main
 ```
 
 ---
 
-### STEP 3 — Deploy on Render (5 min)
+## Step 3: Render
 
-1. Go to **https://render.com** → sign in with GitHub
-2. Click **New +** → **Web Service**
-3. Connect your `flex-v3` repository
-4. Fill in settings:
+1. Go to https://render.com → New → **Web Service**
+2. Connect your GitHub repo
+3. Settings:
+   - **Root Directory:** `backend`
+   - **Build Command:** `npm install`
+   - **Start Command:** `node server.js`
+   - **Instance Type:** Free
 
-| Setting | Value |
-|---------|-------|
-| Name | `flex-v3` |
-| **Root Directory** | `backend` |
-| Environment | `Node` |
-| Build Command | `npm install` |
-| Start Command | `npm start` |
-| Instance Type | `Free` |
-
-5. Scroll to **Environment Variables** → Add:
+4. Under **Environment Variables**, add:
 
 | Key | Value |
 |-----|-------|
 | `DATABASE_URL` | Your Neon connection string |
-| `JWT_SECRET` | Random 64-char string (see below) |
-| `TEACHER_PASSWORD` | Any password you want (e.g. `teacher123`) |
-| `FRONTEND_URL` | `https://flex-v3.onrender.com` *(update after deploy)* |
+| `SESSION_SECRET` | Run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and paste result |
+| `TEACHER_PASSWORD` | Any password you want (e.g. `myclass2026`) |
+| `NODE_ENV` | `production` |
 
-**Generating JWT_SECRET:**
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-6. Click **Create Web Service** → wait ~3 min
-7. Watch Logs — success looks like:
-```
-🎓 FLEX v3 · http://localhost:10000
-📡 WebSocket · ws://localhost:10000/ws
-🗄️  Neon DB  · ✓ Configured
-```
+5. Click **Deploy**. Wait ~2 min. Your app will be at `https://your-app.onrender.com`
 
 ---
 
-### STEP 4 — Update FRONTEND_URL
+## How to Use (Demo Day)
 
-Once you have your Render URL (e.g. `https://flex-v3-xxxx.onrender.com`):
-- Render Dashboard → Environment → update `FRONTEND_URL` to your actual URL
-- Render will auto-redeploy
+### Teacher Flow
+1. Open the app → click **Teacher**
+2. Enter the teacher password (whatever you set in `TEACHER_PASSWORD`)
+3. Enter course name (e.g. "Web Engineering CS-3002")
+4. Set QR and Code refresh intervals using sliders
+5. Upload the student Excel sheet (your instructor's format)
+6. Click **Start Session**
+7. Project the QR + 6-digit code on screen
+8. Watch the live roster update as students scan
+9. Manually toggle any student's status with the Toggle button
+10. When class is done → **Export Sheet** (downloads updated Excel) → **End Session**
 
----
+### Student Flow
+1. Open the app (on phone) → click **Student**
+2. If session is active: enter roll number
+3. **Tab 1 - Scan QR:** point camera at projector
+4. **Tab 2 - Enter Code:** type the 6-digit code shown below the QR
 
-### STEP 5 — Add Your Course
-
-Run in Neon SQL Editor (replace with your real course details):
-
-```sql
--- If teacher id=1 was created by schema.sql:
-INSERT INTO courses (name, code, teacher_id) VALUES ('Web Engineering', 'CS-3002', 1);
--- Add more courses:
-INSERT INTO courses (name, code, teacher_id) VALUES ('Database Systems', 'CS-3004', 1);
-```
-
----
-
-### STEP 6 — Import Students
-
-1. Open your deployed URL on laptop
-2. Click **Teacher** → enter your `TEACHER_PASSWORD`
-3. Click **⬆ Import Student List**
-4. Select the course
-5. Upload the instructor's Excel sheet (the one with Roll No. and Student Name columns)
-6. Click **Import** — all students are enrolled automatically
+### Anti-Proxy Mechanisms
+- QR token changes every N seconds (teacher-configurable)
+- Manual code changes at a separate interval
+- One device fingerprint per student per session
+- Student must be logged into portal (authenticated session)
+- Roll number validated against uploaded student list
 
 ---
 
-## Demo Flow for Presentation
+## Excel Format
 
-1. **Laptop (Teacher):**
-   - Open `https://your-app.onrender.com`
-   - Click Teacher → enter password
-   - Import student list if not done
-   - Click a course → set interval to 10s → Start Session
-   - QR appears — show on projector
+The uploaded sheet must have:
+- A column with "Roll No" in the header (any spelling variation)
+- A column with "Name" or "Student Name"
+- Optional: date columns (DD/MM/YYYY format) with P/A values
 
-2. **Phone (Student):**
-   - Open same URL on phone
-   - Click Student → enter roll number (e.g. `24L-3007`)
-   - Tap the course → camera opens → scan QR
-   - See green tick
-
-3. **Back on laptop:**
-   - See student's name turn green in real time
-   - Toggle any student manually if needed
-   - Click **⬇ Export Excel** — get attendance sheet in instructor format
+The exported sheet:
+- Preserves all previous date columns unchanged
+- Adds today's date as a new column
+- Matches original plain Arial 10 format
+- Filename: `Attendance_CourseName_DD-MM-YYYY.xlsx`
 
 ---
 
-## Excel Format (Output)
+## Troubleshooting
 
-The exported file matches exactly what the instructor wants:
+**Server crash on start:** Check DATABASE_URL is correct in Render env vars. Check Neon schema was run.
 
-```
-| S# | Roll No.  | Student Name       | 14/05/2026 | 15/05/2026 | ...
-|  1 | 23L-3007  | Muhammad Abdullah  |     P      |     A      |
-|  2 | 24L-3003  | Adina Saqib        |     A      |     P      |
-```
+**Import fails:** Make sure the Excel has a "Roll No" column header. The file must be .xlsx format.
 
-- **P** = Present (green cell)
-- **A** = Absent (red cell)
-- Dates in **DD/MM/YYYY** format
-- Students sorted by roll number
+**QR not scanning on mobile:** The app must be served over HTTPS (Render provides this automatically). Camera won't work on plain HTTP.
 
----
+**Students not found:** Make sure students scanned after the sheet was imported. Restarting a session clears the student list — re-import the sheet.
 
-## Anti-Proxy System
-
-Three layers protect against proxy attendance:
-
-1. **Rotating QR token** — refreshes every N seconds (5–60s, you control it). A screenshot shared over WhatsApp will be expired before the recipient can scan it.
-
-2. **Device fingerprint** — each browser gets a persistent ID stored in localStorage. If Student A's phone marks attendance for Student B, the system checks: "has this device fingerprint already been used for a different student in this session?" If yes → rejected.
-
-3. **IP logging** — every scan records the IP address for the teacher's records.
-
----
-
-## Project Structure
-
-```
-flex-v3/
-├── backend/
-│   ├── db/
-│   │   ├── pool.js           # Neon connection
-│   │   └── schema.sql        # Run this in Neon first ← IMPORTANT
-│   ├── middleware/
-│   │   └── auth.js           # JWT middleware
-│   ├── routes/
-│   │   ├── auth.js           # Teacher password + student roll-number entry
-│   │   ├── attendance.js     # QR engine, sessions, roster, WebSocket
-│   │   └── excel.js          # Import .xlsx, export .xlsx, preview/edit
-│   ├── server.js
-│   ├── package.json
-│   └── .env.example          # Copy to .env for local dev
-└── frontend/
-    └── public/
-        ├── index.html        # Single page — no login, toggle button
-        ├── css/style.css
-        └── js/app.js
-```
-
----
-
-## Running Locally
-
-```bash
-cd backend
-npm install
-cp .env.example .env
-# Fill in DATABASE_URL, JWT_SECRET, TEACHER_PASSWORD
-node server.js
-# Open http://localhost:3000
-```
-
----
-
-## Common Issues
-
-| Problem | Fix |
-|---------|-----|
-| "Roll number not found" | Import the student list first via Teacher → Import Student List |
-| Session crashes on start | Run schema.sql in Neon — all tables must exist |
-| Camera doesn't open on phone | Must be HTTPS — Render provides this automatically |
-| QR says expired | Normal — scan the latest code. Token rotated. |
-| Export downloads empty file | Need at least one session with enrolled students |
-| Render free tier slow | First request after 15min idle takes ~30s. Open app before demo. |
-| "Not your course" error | Course teacher_id must match the teacher user's id in DB |
-
----
-
-## Changing Teacher Password
-
-Just update the `TEACHER_PASSWORD` environment variable in Render → Save Changes.
-No code change needed.
+**Export downloads empty sheet:** Students must be imported first. Check that `/api/excel/import` returned success after upload.

@@ -1,235 +1,204 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>FLEX — NU Attendance</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>FLEX Attendance</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
-<div id="app">
+  <div id="app">
 
-  <!-- HOME -->
-  <div id="page-home" class="page active">
-    <div class="home-wrap">
-      <div class="home-brand">
-        <div class="brand-logo">FLEX</div>
-        <p class="brand-tagline">NU Smart Attendance System</p>
-        <p class="brand-sub">Dynamic QR · Anti-Proxy · Excel Export</p>
+    <!-- ===== MODE TOGGLE ===== -->
+    <div id="toggle-page" class="page active">
+      <div class="logo-wrap">
+        <div class="logo">FLEX</div>
+        <div class="logo-sub">Attendance System</div>
       </div>
-      <div class="mode-toggle-card">
-        <p class="toggle-label">I am a…</p>
-        <div class="toggle-row">
-          <button class="mode-btn active" id="btn-mode-teacher" onclick="selectMode('teacher')">
-            <span class="mode-icon">🎓</span><span>Teacher</span>
-          </button>
-          <button class="mode-btn" id="btn-mode-student" onclick="selectMode('student')">
-            <span class="mode-icon">🎒</span><span>Student</span>
-          </button>
+      <div class="toggle-cards">
+        <div class="role-card" id="btn-teacher-mode">
+          <div class="role-icon">🎓</div>
+          <div class="role-label">Teacher</div>
+          <div class="role-desc">Start session, manage attendance</div>
         </div>
-        <!-- Teacher panel -->
-        <div id="mode-teacher-panel" class="mode-panel">
-          <p class="mode-hint">Enter the teacher password to access the dashboard.</p>
-          <div class="form-group">
-            <input type="password" id="teacher-pwd" placeholder="Teacher password"/>
-          </div>
-          <div id="teacher-error" class="error-msg hidden"></div>
-          <button class="btn-primary full" onclick="teacherEnter()">Enter Teacher Mode →</button>
-        </div>
-        <!-- Student panel -->
-        <div id="mode-student-panel" class="mode-panel hidden">
-          <p class="mode-hint">Enter your roll number to mark attendance.</p>
-          <div class="form-group">
-            <input type="text" id="student-rollno" placeholder="e.g. 24L-3007" autocomplete="off"/>
-          </div>
-          <div id="student-error" class="error-msg hidden"></div>
-          <button class="btn-primary full" onclick="studentEnter()">Enter →</button>
+        <div class="role-card" id="btn-student-mode">
+          <div class="role-icon">📱</div>
+          <div class="role-label">Student</div>
+          <div class="role-desc">Mark your attendance</div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- TEACHER DASHBOARD -->
-  <div id="page-teacher" class="page">
-    <nav class="topnav">
-      <div class="nav-brand">FLEX <span class="nav-badge teacher">Teacher</span></div>
-      <div class="nav-right">
-        <span class="nav-user" id="teacher-name-display"></span>
-        <button class="btn-ghost small" onclick="goHome()">← Home</button>
+    <!-- ===== TEACHER PANEL ===== -->
+    <div id="teacher-page" class="page">
+      <div class="top-bar">
+        <button class="back-btn" id="teacher-back">← Back</button>
+        <h2 class="bar-title">Teacher Panel</h2>
+        <span></span>
       </div>
-    </nav>
-    <div class="dashboard">
 
-      <div class="panel" id="t-courses-panel">
-        <div class="panel-header">
-          <h3>My Courses</h3>
-          <button class="btn-outline" onclick="showImportModal()">⬆ Import Student List</button>
+      <!-- Teacher Auth -->
+      <div id="teacher-auth" class="panel">
+        <h3>Enter Teacher Password</h3>
+        <input type="password" id="teacher-pw" placeholder="Password" class="input-field">
+        <button class="btn btn-primary" id="teacher-auth-btn">Continue</button>
+        <p id="teacher-auth-error" class="error-msg"></p>
+      </div>
+
+      <!-- Session Setup -->
+      <div id="session-setup" class="panel hidden">
+        <h3>Start New Session</h3>
+        <input type="text" id="course-name" placeholder="Course Name (e.g. Web Engineering)" class="input-field">
+
+        <div class="slider-group">
+          <label>QR Code Refresh: <strong id="qr-interval-val">10s</strong></label>
+          <input type="range" id="qr-interval" min="5" max="60" value="10" step="1" class="slider">
         </div>
-        <div id="t-courses-list" class="course-grid"></div>
+
+        <div class="slider-group">
+          <label>Manual Code Refresh: <strong id="code-interval-val">15s</strong></label>
+          <input type="range" id="code-interval" min="5" max="60" value="15" step="1" class="slider">
+        </div>
+
+        <label class="upload-label" for="excel-upload">
+          📂 Upload Attendance Sheet (Excel)
+          <span id="upload-filename">No file chosen</span>
+        </label>
+        <input type="file" id="excel-upload" accept=".xlsx,.xls" style="display:none">
+
+        <button class="btn btn-primary" id="start-session-btn">Start Session</button>
+        <p id="session-setup-error" class="error-msg"></p>
       </div>
 
-      <div class="panel hidden" id="t-session-panel">
+      <!-- Active Session -->
+      <div id="active-session" class="panel hidden">
         <div class="session-header">
           <div>
-            <h3 id="t-session-title">Session Active</h3>
-            <p class="session-meta" id="t-session-meta"></p>
+            <div class="session-course" id="session-course-name"></div>
+            <div class="session-date" id="session-date"></div>
           </div>
-          <div class="header-btns">
-            <button class="btn-success" onclick="exportExcel()">⬇ Export Excel</button>
-            <button class="btn-purple"  onclick="showPreview()">📋 All Records</button>
-            <button class="btn-danger"  onclick="endSession()">■ End</button>
+          <div class="session-actions">
+            <button class="btn btn-sm btn-success" id="export-btn">⬇ Export Sheet</button>
+            <button class="btn btn-sm btn-danger" id="end-session-btn">End Session</button>
           </div>
         </div>
-        <div class="session-body">
-          <div class="qr-col">
-            <div class="qr-card">
-              <p class="qr-label">PROJECT ON SCREEN</p>
-              <img id="qr-img" src="" alt="QR" class="qr-img"/>
-              <div class="qr-timer-wrap">
-                <div class="qr-bar"><div id="qr-fill" class="qr-fill"></div></div>
-                <span id="qr-countdown" class="qr-countdown">10s</span>
-              </div>
-              <div id="qr-badge" class="qr-badge">● LIVE</div>
-              <div class="interval-control">
-                <label>Interval: <strong id="interval-display">10</strong>s</label>
-                <input type="range" id="interval-slider" min="5" max="60" step="5" value="10"
-                       oninput="updateIntervalDisplay(this.value)" onchange="changeInterval(this.value)"/>
-                <div class="interval-labels"><span>5s</span><span>60s</span></div>
-              </div>
+
+        <!-- QR Display -->
+        <div class="qr-section">
+          <div class="qr-card">
+            <div id="qr-code-display"></div>
+            <div class="code-below">
+              <span class="code-label">Manual Code:</span>
+              <span class="code-value" id="manual-code-display">------</span>
             </div>
-          </div>
-          <div class="roster-col">
-            <div class="roster-top">
-              <h4>Live Roster</h4>
-              <div class="roster-counts">
-                <span class="pill-present" id="cnt-present">0 Present</span>
-                <span class="pill-absent"  id="cnt-absent">0 Absent</span>
+            <div class="timer-bars">
+              <div class="timer-row">
+                <span class="timer-label">QR:</span>
+                <div class="timer-bar-wrap">
+                  <div class="timer-bar" id="qr-timer-bar"></div>
+                </div>
+                <span class="timer-text" id="qr-timer-text">--s</span>
+              </div>
+              <div class="timer-row">
+                <span class="timer-label">Code:</span>
+                <div class="timer-bar-wrap">
+                  <div class="timer-bar" id="code-timer-bar"></div>
+                </div>
+                <span class="timer-text" id="code-timer-text">--s</span>
               </div>
             </div>
-            <div id="roster-list" class="roster-list"></div>
           </div>
         </div>
-      </div>
 
-      <div class="panel hidden" id="t-preview-panel">
-        <div class="panel-header">
-          <h3>Attendance Records — <span id="preview-course-name" style="color:var(--primary)"></span></h3>
-          <div style="display:flex;gap:8px">
-            <button class="btn-success" onclick="exportExcel()">⬇ Export Excel</button>
-            <button class="btn-ghost"   onclick="hidePreview()">✕ Close</button>
-          </div>
-        </div>
-        <div id="preview-table-wrap" class="preview-scroll"></div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- STUDENT VIEW -->
-  <div id="page-student" class="page">
-    <nav class="topnav">
-      <div class="nav-brand">FLEX <span class="nav-badge student">Student</span></div>
-      <div class="nav-right">
-        <span class="nav-user" id="student-name-display"></span>
-        <button class="btn-ghost small" onclick="goHome()">← Home</button>
-      </div>
-    </nav>
-    <div class="dashboard">
-      <div class="panel">
-        <h3>My Courses</h3>
-        <div id="s-courses-list" class="course-grid"></div>
-      </div>
-      <div class="panel hidden" id="s-scanner-panel">
-        <div class="session-header">
-          <div>
-            <h3 id="s-scanner-title">Mark Attendance</h3>
-            <p id="s-scanner-meta" class="session-meta"></p>
-          </div>
-          <button class="btn-ghost small" onclick="closeScanner()">← Back</button>
-        </div>
-        <div class="scanner-body">
-          <div id="s-no-session" class="scan-state hidden">
-            <div class="state-icon">📋</div>
-            <p>No active session right now.</p>
-            <p class="hint">Ask your teacher to start the session.</p>
-          </div>
-          <div id="s-already" class="scan-state hidden">
-            <div class="state-icon">✅</div>
-            <p id="s-already-text" class="big-ok">Attendance marked!</p>
-            <p class="hint" id="s-already-sub"></p>
-          </div>
-          <div id="s-ready" class="scan-state hidden">
-            <p class="scan-instruction">Scan the QR code projected in your classroom</p>
-            <div id="qr-reader"></div>
-            <div class="scan-divider">— or paste token manually —</div>
-            <div class="manual-row">
-              <input type="text" id="manual-token" placeholder="Paste token here…"/>
-              <button class="btn-primary" onclick="markManual()">Submit</button>
+        <!-- Attendance Roster -->
+        <div class="roster-section">
+          <div class="roster-header">
+            <h3>Live Attendance</h3>
+            <div class="roster-stats">
+              <span class="stat-present" id="stat-present">Present: 0</span>
+              <span class="stat-absent" id="stat-absent">Absent: 0</span>
             </div>
-            <div id="scan-msg" class="scan-msg hidden"></div>
+          </div>
+          <div class="roster-wrap">
+            <table class="roster-table" id="roster-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Roll No.</th>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Method</th>
+                  <th>Toggle</th>
+                </tr>
+              </thead>
+              <tbody id="roster-body"></tbody>
+            </table>
           </div>
         </div>
-        <div id="s-history" class="history-wrap"></div>
       </div>
     </div>
+
+    <!-- ===== STUDENT PANEL ===== -->
+    <div id="student-page" class="page">
+      <div class="top-bar">
+        <button class="back-btn" id="student-back">← Back</button>
+        <h2 class="bar-title">Mark Attendance</h2>
+        <span></span>
+      </div>
+
+      <!-- No session active -->
+      <div id="no-session" class="panel text-center">
+        <div class="big-icon">⏳</div>
+        <p>No active session right now.<br>Wait for your teacher to start class.</p>
+      </div>
+
+      <!-- Student attendance form -->
+      <div id="student-form" class="panel hidden">
+        <div class="session-info-banner">
+          <strong id="student-course-name"></strong>
+          <span id="student-date"></span>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="qr">📸 Scan QR</button>
+          <button class="tab" data-tab="code">🔢 Enter Code</button>
+        </div>
+
+        <div id="tab-qr" class="tab-content active">
+          <p class="hint">Enter your roll number, then scan the QR code shown on the projector.</p>
+          <input type="text" id="student-roll-qr" placeholder="Roll Number (e.g. K22-1234)" class="input-field">
+
+          <div id="qr-scanner-wrap">
+            <video id="qr-video" autoplay playsinline></video>
+            <div class="scan-overlay">
+              <div class="scan-corner tl"></div>
+              <div class="scan-corner tr"></div>
+              <div class="scan-corner bl"></div>
+              <div class="scan-corner br"></div>
+            </div>
+            <button class="btn btn-secondary" id="start-camera-btn">Start Camera</button>
+          </div>
+          <p id="qr-scan-status" class="status-msg"></p>
+        </div>
+
+        <div id="tab-code" class="tab-content">
+          <p class="hint">Enter your roll number and the 6-digit code shown below the QR on the projector.</p>
+          <input type="text" id="student-roll-code" placeholder="Roll Number (e.g. K22-1234)" class="input-field">
+          <input type="text" id="manual-code-input" placeholder="6-digit code" class="input-field" maxlength="6" inputmode="numeric">
+          <button class="btn btn-primary" id="submit-code-btn">Mark Attendance</button>
+          <p id="code-status" class="status-msg"></p>
+        </div>
+
+        <div id="attendance-success" class="success-banner hidden">
+          <div class="success-icon">✅</div>
+          <div id="success-msg"></div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-</div>
-
-<!-- Import Modal -->
-<div id="import-modal" class="modal-overlay hidden">
-  <div class="modal-card">
-    <div class="modal-header">
-      <h3>Import Student List</h3>
-      <button class="modal-close" onclick="hideImportModal()">✕</button>
-    </div>
-    <p class="modal-hint">Upload the instructor's Excel sheet.<br>
-    Needs columns: <strong>Roll No.</strong> and <strong>Student Name</strong></p>
-    <div class="form-group">
-      <label>Course</label>
-      <select id="import-course-select"></select>
-    </div>
-    <div class="upload-zone" id="upload-zone"
-         ondrop="handleDrop(event)" ondragover="event.preventDefault()">
-      <div class="upload-icon">📄</div>
-      <p>Drag & drop .xlsx here, or</p>
-      <label class="btn-outline" style="cursor:pointer">
-        Browse <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(this)"/>
-      </label>
-      <p id="upload-filename" class="upload-fn"></p>
-    </div>
-    <div id="import-msg" class="import-msg hidden"></div>
-    <div class="modal-footer">
-      <button class="btn-ghost"   onclick="hideImportModal()">Cancel</button>
-      <button class="btn-primary" onclick="doImport()" id="btn-do-import" disabled>Import</button>
-    </div>
-  </div>
-</div>
-
-<!-- Start Session Modal -->
-<div id="start-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:400px">
-    <div class="modal-header">
-      <h3 id="start-modal-title">Start Session</h3>
-      <button class="modal-close" onclick="hideStartModal()">✕</button>
-    </div>
-    <p class="modal-hint">Set QR refresh interval (5–60 s). Shorter = safer.</p>
-    <div class="form-group">
-      <label>QR Token Interval: <strong id="start-interval-val">10</strong>s</label>
-      <input type="range" id="start-interval" min="5" max="60" step="5" value="10"
-             oninput="document.getElementById('start-interval-val').textContent=this.value"/>
-      <div class="interval-labels"><span>5s (safest)</span><span>60s</span></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-ghost"   onclick="hideStartModal()">Cancel</button>
-      <button class="btn-primary" onclick="confirmStartSession()">Start →</button>
-    </div>
-  </div>
-</div>
-
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<script src="/js/app.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>
